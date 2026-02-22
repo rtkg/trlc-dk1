@@ -249,7 +249,7 @@ class DK1Follower(Robot):
         Returns:
             Feedforward torques (Nm).
         """
-        return pin.nonLinearEffects(self.pin_model, self.pin_data, q, np.zeros_like(dq))
+        return pin.nonLinearEffects(self.pin_model, self.pin_data, q, dq)
 
     # ------------------------------------------------------------------
     # LeRobot Robot interface
