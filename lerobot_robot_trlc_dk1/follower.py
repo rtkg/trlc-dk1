@@ -145,6 +145,8 @@ class DK1Follower(Robot):
 
         # Per-joint impedance parameters — populated when controller_type="joint_impedance"
         self.params: dict[str, JointImpedanceParams] = {}
+        self._last_wrench: np.ndarray = np.zeros(6)
+        self._ee_frame_id: int | None = None
         if config.controller_type == "joint_impedance":
             self.params = self._load_impedance_config()
 
@@ -209,6 +211,32 @@ class DK1Follower(Robot):
         for i, name in enumerate(self.pin_model.names[1:]):  # Skip universe joint
             logger.info(f"  q[{i}] = {name}")
 
+    def estimate_external_wrench(
+        self, q: np.ndarray, tau_measured: np.ndarray, tau_ff: np.ndarray
+    ) -> np.ndarray:
+        """
+        Estimate external wrench at the end-effector: w_ext = (J_arm^T)^{-1} * tau_ext.
+
+        Args:
+            q: Full joint positions (pin_model.nq).
+            tau_measured: Measured torques for the 6 arm joints.
+            tau_ff: Model-predicted torques from nonLinearEffects (pin_model.nq).
+
+        Returns:
+            6D wrench [fx, fy, fz, tx, ty, tz] in LOCAL_WORLD_ALIGNED frame.
+        """
+        tau_ext = tau_measured - tau_ff[:6]
+
+        pin.computeJointJacobians(self.pin_model, self.pin_data, q)
+        pin.updateFramePlacements(self.pin_model, self.pin_data)
+        J_full = pin.getFrameJacobian(
+            self.pin_model, self.pin_data, self._ee_frame_id, pin.LOCAL_WORLD_ALIGNED
+        )
+        J_arm = J_full[:, :6]
+
+        self._last_wrench = np.linalg.solve(J_arm.T, tau_ext)
+        return self._last_wrench
+
     def compute_feedforward_torque(self, q: np.ndarray, dq: np.ndarray) -> np.ndarray:
         """
         Compute feedforward torques (gravity + Coriolis + centripetal) using Pinocchio.
@@ -238,7 +266,11 @@ class DK1Follower(Robot):
 
     @cached_property
     def observation_features(self) -> dict[str, type | tuple]:
-        return {**self._motors_ft, **self._cameras_ft}
+        feats = {**self._motors_ft, **self._cameras_ft}
+        if self.config.controller_type == "joint_impedance":
+            for c in ["wrench.fx", "wrench.fy", "wrench.fz", "wrench.tx", "wrench.ty", "wrench.tz"]:
+                feats[c] = float
+        return feats
 
     @cached_property
     def action_features(self) -> dict[str, type]:
@@ -254,6 +286,7 @@ class DK1Follower(Robot):
 
         if self.config.controller_type == "joint_impedance":
             self._load_pinocchio_model()
+            self._ee_frame_id = self.pin_model.getFrameId("tool0")
 
         self.serial_device = serial.Serial(self.config.port, 921600, timeout=0.5)
         time.sleep(0.5)
@@ -341,6 +374,15 @@ class DK1Follower(Robot):
         dt_ms = (time.perf_counter() - start) * 1e3
         logger.debug(f"{self} read state: {dt_ms:.1f}ms")
 
+        # Include cached wrench estimate (computed in previous _send_action_impedance cycle)
+        if self.config.controller_type == "joint_impedance" and self.pin_model is not None:
+            obs_dict["wrench.fx"] = self._last_wrench[0]
+            obs_dict["wrench.fy"] = self._last_wrench[1]
+            obs_dict["wrench.fz"] = self._last_wrench[2]
+            obs_dict["wrench.tx"] = self._last_wrench[3]
+            obs_dict["wrench.ty"] = self._last_wrench[4]
+            obs_dict["wrench.tz"] = self._last_wrench[5]
+
         # Capture images from cameras
         for cam_key, cam in self.cameras.items():
             start = time.perf_counter()
@@ -408,6 +450,10 @@ class DK1Follower(Robot):
                 dq_current[i] = self.motors[joint_name].getVelocity()
 
         tau_ff = self.compute_feedforward_torque(q_current, dq_current)
+
+        # Estimate external wrench at the end-effector
+        tau_measured = np.array([self.motors[jn].getTorque() for jn in self.joint_names])
+        self.estimate_external_wrench(q_current, tau_measured, tau_ff)
 
         # Send commands to all motors
         for key, motor in self.motors.items():
