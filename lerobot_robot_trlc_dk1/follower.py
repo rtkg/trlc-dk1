@@ -146,6 +146,7 @@ class DK1Follower(Robot):
         # Per-joint impedance parameters — populated when controller_type="joint_impedance"
         self.params: dict[str, JointImpedanceParams] = {}
         self._last_wrench: np.ndarray = np.zeros(6)
+        self._last_tau_fb: np.ndarray = np.zeros(6)
         self._ee_frame_id: int | None = None
         if config.controller_type == "joint_impedance":
             self.params = self._load_impedance_config()
@@ -234,21 +235,21 @@ class DK1Follower(Robot):
         )
         J_arm = J_full[:, :6]
 
-        self._last_wrench = np.linalg.solve(J_arm.T, tau_ext)
+        self._last_wrench = -np.linalg.solve(J_arm.T, tau_ext)
         return self._last_wrench
 
     def compute_feedforward_torque(self, q: np.ndarray, dq: np.ndarray) -> np.ndarray:
         """
-        Compute feedforward torques (gravity + Coriolis + centripetal) using Pinocchio.
+        Compute gravity compensation torques using Pinocchio.
 
         Args:
             q: Joint positions array matching the Pinocchio model DOF.
-            dq: Joint velocities array matching the Pinocchio model DOF.
+            dq: Joint velocities array (unused, kept for interface compatibility).
 
         Returns:
             Feedforward torques (Nm).
         """
-        return pin.nonLinearEffects(self.pin_model, self.pin_data, q, dq)
+        return pin.nonLinearEffects(self.pin_model, self.pin_data, q, np.zeros_like(dq))
 
     # ------------------------------------------------------------------
     # LeRobot Robot interface
@@ -270,6 +271,8 @@ class DK1Follower(Robot):
         if self.config.controller_type == "joint_impedance":
             for c in ["wrench.fx", "wrench.fy", "wrench.fz", "wrench.tx", "wrench.ty", "wrench.tz"]:
                 feats[c] = float
+            for jn in self.joint_names:
+                feats[f"{jn}.tau_fb"] = float
         return feats
 
     @cached_property
@@ -382,6 +385,8 @@ class DK1Follower(Robot):
             obs_dict["wrench.tx"] = self._last_wrench[3]
             obs_dict["wrench.ty"] = self._last_wrench[4]
             obs_dict["wrench.tz"] = self._last_wrench[5]
+            for i, jn in enumerate(self.joint_names):
+                obs_dict[f"{jn}.tau_fb"] = self._last_tau_fb[i]
 
         # Capture images from cameras
         for cam_key, cam in self.cameras.items():
@@ -450,9 +455,10 @@ class DK1Follower(Robot):
                 dq_current[i] = self.motors[joint_name].getVelocity()
 
         tau_ff = self.compute_feedforward_torque(q_current, dq_current)
+        tau_measured = np.array([self.motors[jn].getTorque() for jn in self.joint_names])
+        self._last_tau_fb = tau_measured - tau_ff[:6]
 
         # Estimate external wrench at the end-effector
-        tau_measured = np.array([self.motors[jn].getTorque() for jn in self.joint_names])
         self.estimate_external_wrench(q_current, tau_measured, tau_ff)
 
         # Send commands to all motors
@@ -460,7 +466,6 @@ class DK1Follower(Robot):
             if key == "gripper":
                 self._send_gripper_action(goal_pos)
             elif key in goal_pos:
-                # MIT impedance control for arm joints
                 i = self.joint_names.index(key)
                 imp = self.params[key]
 
