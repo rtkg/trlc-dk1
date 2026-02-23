@@ -22,6 +22,8 @@ def main():
     parser.add_argument("--port", required=True)
     parser.add_argument("--joint", default="joint_6",
                         choices=["joint_1","joint_2","joint_3","joint_4","joint_5","joint_6","gripper"])
+    parser.add_argument("--q_0", type=float, default=None,
+                        help="Servo joint to this position (rad) before oscillating")
     parser.add_argument("--amplitude", type=float, default=0.3,
                         help="Sinusoid amplitude in radians (gripper: 0-1 normalized)")
     parser.add_argument("--frequency", type=float, default=0.5,
@@ -58,6 +60,26 @@ def main():
     print(f"Baseline positions: { {k: f'{v:.3f}' for k, v in baseline.items()} }")
 
     freq = 200  # control loop Hz
+
+    # Servo to q_0 if specified
+    if args.q_0 is not None:
+        joint_key = f"{args.joint}.pos"
+        q_start = baseline[joint_key]
+        servo_duration = 2.0
+        print(f"Servoing {args.joint} from {q_start:.3f} to {args.q_0:.3f} rad...")
+        t0 = time.time()
+        while (t := time.time() - t0) < servo_duration:
+            alpha = t / servo_duration
+            action = dict(baseline)
+            action[joint_key] = q_start + alpha * (args.q_0 - q_start)
+            follower.send_action(action)
+            if args.display_data:
+                obs = follower.get_observation()
+                log_rerun_data(observation=obs, action=action)
+            time.sleep(1 / freq)
+        baseline[joint_key] = args.q_0
+        print("Servo complete. Starting oscillation.")
+
     t0 = time.time()
 
     try:
