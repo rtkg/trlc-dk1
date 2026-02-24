@@ -81,13 +81,32 @@ def main():
         print("Servo complete. Starting oscillation.")
 
     t0 = time.time()
+    pause_total = 0.0  # accumulated pause time (excluded from oscillation phase)
+    prev_sign = 0
 
     try:
         while True:
-            t = time.time() - t0
+            t = time.time() - t0 - pause_total
             action = dict(baseline)  # copy baseline
 
-            offset = args.amplitude * math.sin(2 * math.pi * args.frequency * t)
+            sine_val = math.sin(2 * math.pi * args.frequency * t)
+            curr_sign = 1 if sine_val >= 0 else -1
+
+            # Pause for 1s at each zero crossing (skip the initial t≈0)
+            if prev_sign != 0 and curr_sign != prev_sign:
+                print(f"Zero crossing at t_osc={t:.2f}s — holding baseline for 1s")
+                pause_start = time.time()
+                while time.time() - pause_start < 1.0:
+                    follower.send_action(dict(baseline))
+                    if args.display_data:
+                        obs = follower.get_observation()
+                        log_rerun_data(observation=obs, action=dict(baseline))
+                    time.sleep(1 / freq)
+                pause_total += time.time() - pause_start
+
+            prev_sign = curr_sign
+
+            offset = args.amplitude * sine_val
             action[f"{args.joint}.pos"] = baseline[f"{args.joint}.pos"] + offset
 
             follower.send_action(action)
