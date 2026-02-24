@@ -94,9 +94,9 @@ def main():
 
             # Pause for 1s at each zero crossing (skip the initial t≈0)
             if prev_sign != 0 and curr_sign != prev_sign:
-                print(f"Zero crossing at t_osc={t:.2f}s — holding baseline for 1s")
+                print(f"Zero crossing at t_osc={t:.2f}s — holding baseline for 3s")
                 pause_start = time.time()
-                while time.time() - pause_start < 1.0:
+                while time.time() - pause_start < 3.0:
                     follower.send_action(dict(baseline))
                     if args.display_data:
                         obs = follower.get_observation()
