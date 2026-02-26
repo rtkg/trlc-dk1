@@ -2,7 +2,7 @@
 RERUN_FLUSH_NUM_BYTES=1000 taskset -c 8-15 chrt -f 85 uv run lerobot-teleoperate \
     --fps=200 \
     --robot.type=dk1_follower \
-    --robot.controller_type=joint_impedance \
+    --robot.controller_type=${1:-joint_impedance} \
     --robot.port=/dev/ttyACM1 \
     --robot.urdf_path=/home/rtkg/Coding/trlc-dk1-follower-urdf/TRLC-DK1-Follower.urdf \
     --robot.controller_config_path=config/impedance_config.yaml \
