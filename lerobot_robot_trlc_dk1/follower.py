@@ -148,6 +148,12 @@ class DK1Follower(Robot):
         self._last_wrench: np.ndarray = np.zeros(6)
         self._last_tau_ext: np.ndarray = np.zeros(6)
         self._ee_frame_id: int | None = None
+
+        # Cached motor state — populated once per cycle in get_observation(),
+        # initialized from actual motor readings in configure().
+        self._q: np.ndarray = np.zeros(6)
+        self._dq: np.ndarray = np.zeros(6)
+        self._tau: np.ndarray = np.zeros(6)
         if config.controller_type == "joint_impedance":
             self.params = self._load_impedance_config()
 
@@ -357,6 +363,13 @@ class DK1Follower(Robot):
             time.sleep(0.01)
         self.control.switchControlMode(self.motors["gripper"], Control_Type.Torque_Pos)
 
+        # Seed cached motor state from actual readings
+        for i, jn in enumerate(self.joint_names):
+            self.control.refresh_motor_status(self.motors[jn])
+            self._q[i] = self.motors[jn].getPosition()
+            self._dq[i] = self.motors[jn].getVelocity()
+            self._tau[i] = self.motors[jn].getTorque()
+
     def get_observation(self) -> dict[str, Any]:
         if not self.is_connected:
             raise DeviceNotConnectedError(f"{self} is not connected.")
@@ -368,11 +381,14 @@ class DK1Follower(Robot):
         for key, motor in self.motors.items():
             self.control.refresh_motor_status(motor)
             if key == "gripper":
-                # Normalize gripper position between 1 (closed) and 0 (open)
                 obs_dict[f"{key}.pos"] = map_range(
                     motor.getPosition(), self.gripper_open_pos, self.gripper_closed_pos, 0.0, 1.0)
             else:
-                obs_dict[f"{key}.pos"] = motor.getPosition()
+                i = self.joint_names.index(key)
+                self._q[i] = motor.getPosition()
+                self._dq[i] = motor.getVelocity()
+                self._tau[i] = motor.getTorque()
+                obs_dict[f"{key}.pos"] = self._q[i]
 
         dt_ms = (time.perf_counter() - start) * 1e3
         logger.debug(f"{self} read state: {dt_ms:.1f}ms")
@@ -402,7 +418,6 @@ class DK1Follower(Robot):
         if "gripper" not in goal_pos:
             return
 
-        self.control.refresh_motor_status(self.motors["gripper"])
         gripper_goal_pos_mapped = map_range(
             goal_pos["gripper"], 0.0, 1.0, self.gripper_open_pos, self.gripper_closed_pos)
         self.control.control_pos_force(
@@ -445,17 +460,15 @@ class DK1Follower(Robot):
             tau = kp * (q_des - q) + kd * (dq_des - dq) + tau_ff
         where tau_ff includes gravity, Coriolis, and centripetal terms.
         """
-        # Read current arm state for dynamics computation
+        # Use cached state from get_observation() for dynamics computation
         q_current = np.zeros(self.pin_model.nq)
         dq_current = np.zeros(self.pin_model.nq)
-        for i, joint_name in enumerate(self.joint_names):
-            self.control.refresh_motor_status(self.motors[joint_name])
-            if i < self.pin_model.nq:
-                q_current[i] = self.motors[joint_name].getPosition()
-                dq_current[i] = self.motors[joint_name].getVelocity()
+        n = min(len(self.joint_names), self.pin_model.nq)
+        q_current[:n] = self._q[:n]
+        dq_current[:n] = self._dq[:n]
 
         tau_ff = self.compute_feedforward_torque(q_current, dq_current)
-        tau_measured = np.array([self.motors[jn].getTorque() for jn in self.joint_names])
+        tau_measured = self._tau.copy()
         self._last_tau_ext = tau_measured - tau_ff[:6]
 
         # Estimate external wrench at the end-effector
