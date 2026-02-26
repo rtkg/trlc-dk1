@@ -1,5 +1,5 @@
 #!/bin/bash
-RERUN_FLUSH_NUM_BYTES=1000 uv run lerobot-teleoperate \
+RERUN_FLUSH_NUM_BYTES=1000 taskset -c 8-15 chrt -f 85 uv run lerobot-teleoperate \
     --robot.type=dk1_follower \
     --robot.controller_type=joint_impedance \
     --robot.port=/dev/ttyACM0 \
