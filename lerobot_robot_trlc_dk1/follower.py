@@ -158,6 +158,7 @@ class DK1Follower(Robot):
             self.params = self._load_impedance_config()
 
         self.cameras = make_cameras_from_configs(config.cameras)
+        self._last_camera_frame: dict[str, Any] = {}  # track per-camera frame identity
 
     # ------------------------------------------------------------------
     # Impedance helpers
@@ -306,6 +307,7 @@ class DK1Follower(Robot):
 
         for cam in self.cameras.values():
             cam.connect()
+            cam.async_read()  # start background thread & cache first frame
 
     @property
     def is_calibrated(self) -> bool:
@@ -374,12 +376,11 @@ class DK1Follower(Robot):
         if not self.is_connected:
             raise DeviceNotConnectedError(f"{self} is not connected.")
 
-        # Read arm position
-        start = time.perf_counter()
-
+        # Use motor state already updated by recv() inside the previous
+        # send_action() cycle (controlMIT / control_pos_force each call recv()).
+        # This avoids 7 extra serial round-trips per loop.
         obs_dict = {}
         for key, motor in self.motors.items():
-            self.control.refresh_motor_status(motor)
             if key == "gripper":
                 obs_dict[f"{key}.pos"] = map_range(
                     motor.getPosition(), self.gripper_open_pos, self.gripper_closed_pos, 0.0, 1.0)
@@ -389,9 +390,6 @@ class DK1Follower(Robot):
                 self._dq[i] = motor.getVelocity()
                 self._tau[i] = motor.getTorque()
                 obs_dict[f"{key}.pos"] = self._q[i]
-
-        dt_ms = (time.perf_counter() - start) * 1e3
-        logger.debug(f"{self} read state: {dt_ms:.1f}ms")
 
         # Include cached wrench estimate (computed in previous _send_action_impedance cycle)
         if self.config.controller_type == "joint_impedance" and self.pin_model is not None:
@@ -404,12 +402,13 @@ class DK1Follower(Robot):
             for i, jn in enumerate(self.joint_names):
                 obs_dict[f"{jn}.tau_ext"] = self._last_tau_ext[i]
 
-        # Capture images from cameras
+        # Non-blocking camera read: only include frame when it's genuinely new
         for cam_key, cam in self.cameras.items():
-            start = time.perf_counter()
-            obs_dict[cam_key] = cam.async_read()
-            dt_ms = (time.perf_counter() - start) * 1e3
-            logger.debug(f"{self} read {cam_key}: {dt_ms:.1f}ms")
+            with cam.frame_lock:
+                frame = cam.latest_frame
+            if frame is not None and frame is not self._last_camera_frame.get(cam_key):
+                obs_dict[cam_key] = frame
+                self._last_camera_frame[cam_key] = frame
 
         return obs_dict
 

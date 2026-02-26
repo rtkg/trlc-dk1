@@ -14,7 +14,6 @@
 
 from dataclasses import dataclass
 import logging
-import time
 import numpy as np
 
 from lerobot.teleoperators.teleoperator import Teleoperator, TeleoperatorConfig
@@ -105,8 +104,6 @@ class DK1Leader(Teleoperator):
         if not self.is_connected:
             raise DeviceNotConnectedError(f"{self} is not connected.")
 
-        start = time.perf_counter()
-        
         action = self.bus.sync_read(normalize=False, data_name="Present_Position")
         action = {f"{motor}.pos": (val/4096*2*np.pi-np.pi) if motor != "gripper" else val for motor, val in action.items()}
         
@@ -114,8 +111,6 @@ class DK1Leader(Teleoperator):
         gripper_range = self.config.gripper_open_pos - self.config.gripper_closed_pos
         action["gripper.pos"] = 1 - (action["gripper.pos"] - self.config.gripper_closed_pos) / gripper_range
         
-        dt_ms = (time.perf_counter() - start) * 1e3
-        logger.debug(f"{self} read action: {dt_ms:.1f}ms")
         return action
 
     def send_feedback(self, feedback: dict[str, float]) -> None:

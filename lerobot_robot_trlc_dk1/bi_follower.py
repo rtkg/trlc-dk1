@@ -14,7 +14,6 @@
 
 from dataclasses import dataclass, field
 from functools import cached_property
-import time
 import logging
 from typing import Any
 
@@ -94,6 +93,7 @@ class BiDK1Follower(Robot):
         self.left_arm = DK1Follower(left_arm_config)
         self.right_arm = DK1Follower(right_arm_config)
         self.cameras = make_cameras_from_configs(config.cameras)
+        self._last_camera_frame: dict[str, Any] = {}  # track per-camera frame identity
 
     @property
     def _motors_ft(self) -> dict[str, type]:
@@ -125,6 +125,7 @@ class BiDK1Follower(Robot):
 
         for cam in self.cameras.values():
             cam.connect()
+            cam.async_read()  # start background thread & cache first frame
 
     @property
     def is_calibrated(self) -> bool:
@@ -146,11 +147,13 @@ class BiDK1Follower(Robot):
         right_obs = self.right_arm.get_observation()
         obs_dict.update({f"right_{key}": value for key, value in right_obs.items()})
 
+        # Non-blocking camera read: only include frame when it's genuinely new
         for cam_key, cam in self.cameras.items():
-            start = time.perf_counter()
-            obs_dict[cam_key] = cam.async_read()
-            dt_ms = (time.perf_counter() - start) * 1e3
-            logger.debug(f"{self} read {cam_key}: {dt_ms:.1f}ms")
+            with cam.frame_lock:
+                frame = cam.latest_frame
+            if frame is not None and frame is not self._last_camera_frame.get(cam_key):
+                obs_dict[cam_key] = frame
+                self._last_camera_frame[cam_key] = frame
 
         return obs_dict
 
