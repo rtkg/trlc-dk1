@@ -29,7 +29,7 @@ joints:
     damping_ratio: 1.0
 
   joint_4:  # DM4310 - wrist roll (light load)
-    kp: 5.0
+    kp: 3.5
     damping_ratio: 1.0
 
   joint_5:  # DM4310 - wrist pitch
