@@ -303,11 +303,14 @@ class DK1Follower(Robot):
 
         self.control = MotorControl(self.serial_device)
         self.bus_connected = True
-        self.configure()
 
+        # Connect cameras first so the slow startup (~5s) happens before
+        # motor configure/warmup/tare — no command gap between tare and loop.
         for cam in self.cameras.values():
             cam.connect()
             cam.async_read()  # start background thread & cache first frame
+
+        self.configure()
 
     @property
     def is_calibrated(self) -> bool:
@@ -371,6 +374,34 @@ class DK1Follower(Robot):
             self._q[i] = self.motors[jn].getPosition()
             self._dq[i] = self.motors[jn].getVelocity()
             self._tau[i] = self.motors[jn].getTorque()
+
+        # Warmup: run MIT cycles at current position with gravity comp so
+        # motor torques reach steady state before the main loop starts.
+        if self.config.controller_type == "joint_impedance" and self.pin_model is not None:
+            for _ in range(10):
+                q_pin = np.zeros(self.pin_model.nq)
+                dq_pin = np.zeros(self.pin_model.nq)
+                n = min(len(self.joint_names), self.pin_model.nq)
+                q_pin[:n] = self._q[:n]
+                dq_pin[:n] = self._dq[:n]
+                tau_ff = self.compute_feedforward_torque(q_pin, dq_pin)
+
+                for i, jn in enumerate(self.joint_names):
+                    imp = self.params[jn]
+                    kp = min(imp.kp, self.MIT_KP_MAX)
+                    kd = min(imp.kd, self.MIT_KD_MAX)
+                    tau_joint_ff = np.clip(
+                        tau_ff[i], -self.TORQUE_LIMITS[jn], self.TORQUE_LIMITS[jn]
+                    )
+                    self.control.controlMIT(
+                        self.motors[jn], kp=kp, kd=kd,
+                        q=self._q[i], dq=0.0, tau=tau_joint_ff,
+                    )
+                    # controlMIT recv() updates motor cache
+                    self._q[i] = self.motors[jn].getPosition()
+                    self._dq[i] = self.motors[jn].getVelocity()
+                    self._tau[i] = self.motors[jn].getTorque()
+
 
     def get_observation(self) -> dict[str, Any]:
         if not self.is_connected:
