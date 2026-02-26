@@ -12,6 +12,7 @@
 #   See the License for the specific language governing permissions and
 #   limitations under the License.
 
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from functools import cached_property
 import logging
@@ -94,6 +95,7 @@ class BiDK1Follower(Robot):
         self.right_arm = DK1Follower(right_arm_config)
         self.cameras = make_cameras_from_configs(config.cameras)
         self._last_camera_frame: dict[str, Any] = {}  # track per-camera frame identity
+        self._executor = ThreadPoolExecutor(max_workers=2)
 
     @property
     def _motors_ft(self) -> dict[str, type]:
@@ -140,11 +142,13 @@ class BiDK1Follower(Robot):
 
     def get_observation(self) -> dict[str, Any]:
         obs_dict = {}
-        
-        left_obs = self.left_arm.get_observation()
-        obs_dict.update({f"left_{key}": value for key, value in left_obs.items()})
 
-        right_obs = self.right_arm.get_observation()
+        left_future = self._executor.submit(self.left_arm.get_observation)
+        right_future = self._executor.submit(self.right_arm.get_observation)
+        left_obs = left_future.result()
+        right_obs = right_future.result()
+
+        obs_dict.update({f"left_{key}": value for key, value in left_obs.items()})
         obs_dict.update({f"right_{key}": value for key, value in right_obs.items()})
 
         # Non-blocking camera read: only include frame when it's genuinely new
@@ -165,8 +169,10 @@ class BiDK1Follower(Robot):
             key.removeprefix("right_"): value for key, value in action.items() if key.startswith("right_")
         }
 
-        send_action_left = self.left_arm.send_action(left_action)
-        send_action_right = self.right_arm.send_action(right_action)
+        left_future = self._executor.submit(self.left_arm.send_action, left_action)
+        right_future = self._executor.submit(self.right_arm.send_action, right_action)
+        send_action_left = left_future.result()
+        send_action_right = right_future.result()
 
         prefixed_send_action_left = {f"left_{key}": value for key, value in send_action_left.items()}
         prefixed_send_action_right = {f"right_{key}": value for key, value in send_action_right.items()}

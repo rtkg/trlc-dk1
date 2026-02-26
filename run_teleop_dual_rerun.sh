@@ -12,6 +12,6 @@ RERUN_FLUSH_NUM_BYTES=1000 taskset -c 8-15 chrt -f 85 uv run lerobot-teleoperate
     --teleop.left_arm_port=/dev/ttyACM2 \
     --teleop.right_arm_port=/dev/ttyACM3 \
     --robot.cameras='{"left_wrist":{"type":"opencv","index_or_path":"/dev/video2","width":1280,"height":720,"fps":60,"rotation":180,"fourcc":"MJPG"},"right_wrist":{"type":"opencv","index_or_path":"/dev/video0","width":1280,"height":720,"fps":60,"rotation":180,"fourcc":"MJPG"}}' \
-    --display_data=true \
+    --display_data=false \
     --display_url=10.11.10.36 \
     --display_port=9876

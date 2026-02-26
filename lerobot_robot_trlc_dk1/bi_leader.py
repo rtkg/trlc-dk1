@@ -12,6 +12,7 @@
 #   See the License for the specific language governing permissions and
 #   limitations under the License.
 
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 import logging
 from lerobot.teleoperators.teleoperator import Teleoperator, TeleoperatorConfig
@@ -51,6 +52,7 @@ class BiDK1Leader(Teleoperator):
         
         self.left_arm = DK1Leader(left_arm_config)
         self.right_arm = DK1Leader(right_arm_config)
+        self._executor = ThreadPoolExecutor(max_workers=2)
 
     @property
     def action_features(self) -> dict[str, type]:
@@ -86,14 +88,14 @@ class BiDK1Leader(Teleoperator):
         self.right_arm.setup_motors()
 
     def get_action(self) -> dict[str, float]:
+        left_future = self._executor.submit(self.left_arm.get_action)
+        right_future = self._executor.submit(self.right_arm.get_action)
+        left_action = left_future.result()
+        right_action = right_future.result()
+
         action_dict = {}
-
-        left_action = self.left_arm.get_action()
         action_dict.update({f"left_{key}": value for key, value in left_action.items()})
-
-        right_action = self.right_arm.get_action()
         action_dict.update({f"right_{key}": value for key, value in right_action.items()})
-        
         return action_dict
 
     def send_feedback(self, feedback: dict[str, float]) -> None:
