@@ -312,8 +312,10 @@ class DK1Robot:
             # ------------------------------------------------------------------
             elapsed = time.monotonic() - t_start
             sleep_time = period - elapsed
-            if sleep_time > 0:
-                time.sleep(sleep_time)
+            if sleep_time > 0.001:
+                time.sleep(sleep_time - 0.001)
+            while time.monotonic() - t_start < period:
+                pass
 
             loop_count += 1
             now = time.monotonic()
