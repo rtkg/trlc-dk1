@@ -88,7 +88,9 @@ class BiDK1Follower(Robot):
 
     @cached_property
     def observation_features(self) -> dict[str, type | tuple]:
-        return {**self._motors_ft, **self._cameras_ft}
+        left_obs_ft = {f"left_{k}": v for k, v in self.left_arm.observation_features.items() if not isinstance(v, tuple)}
+        right_obs_ft = {f"right_{k}": v for k, v in self.right_arm.observation_features.items() if not isinstance(v, tuple)}
+        return {**left_obs_ft, **right_obs_ft, **self._cameras_ft}
 
     @cached_property
     def action_features(self) -> dict[str, type]:

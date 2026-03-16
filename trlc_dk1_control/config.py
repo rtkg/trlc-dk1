@@ -77,6 +77,10 @@ class DK1RobotConfig:
     command_timeout_s: float = 0.5    # hold position (damping only) after this idle period
     overcurrent_threshold: int = 20   # consecutive over-limit torque counts before damping
 
+    # Wrench estimation
+    enable_wrench_estimation: bool = True
+    ee_body_name: str = "link6-7"   # MuJoCo body for EE Jacobian
+
     # Gripper parameters
     gripper_open_pos: float = 0.0     # rad (set by auto-calibration at startup)
     gripper_closed_pos: float = -4.7  # rad

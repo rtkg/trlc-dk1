@@ -12,6 +12,7 @@ dependencies = [
   "dynamixel-sdk>=3.7.31",
   "lerobot@https://github.com/huggingface/lerobot.git",
   "mujoco>=3.0.0",
+  "rerun-sdk>=0.16.0",
 ]
 
 authors = [

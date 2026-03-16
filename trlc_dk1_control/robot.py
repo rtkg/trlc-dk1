@@ -29,6 +29,7 @@ import numpy as np
 from .config import DK1RobotConfig, DK1_DEFAULT_CONFIG, DM4310_DQ_MAX
 from .gravity_comp import GravityCompensator, NoGravityComp
 from .motor_chain import DK1MotorChain
+from .wrench_estimation import WrenchEstimator, NoWrenchEstimator
 
 logger = logging.getLogger(__name__)
 
@@ -65,12 +66,26 @@ class DK1Robot:
             self._grav_comp = NoGravityComp()
             logger.warning("Gravity compensation disabled (no mjcf_path provided)")
 
+        if config.enable_wrench_estimation and isinstance(self._grav_comp, GravityCompensator):
+            self._wrench_estimator: WrenchEstimator | NoWrenchEstimator = WrenchEstimator(
+                self._grav_comp.mj_model, ee_body_name=config.ee_body_name
+            )
+        else:
+            self._wrench_estimator = NoWrenchEstimator()
+            if config.enable_wrench_estimation:
+                logger.warning("Wrench estimation disabled (no MuJoCo model available)")
+
         # Server thread shared state — protected by _cmd_lock
         self._cmd_lock = threading.Lock()
         self._q_des = np.zeros(6)      # (6,) arm joint targets in radians
         self._gripper_des = 0.0        # normalised gripper position [0=open, 1=closed]
         self._last_cmd_time: float = 0.0
         self._damping_mode: bool = False   # set when over-current threshold exceeded
+
+        # Wrench estimation state — protected by _state_lock
+        self._state_lock = threading.Lock()
+        self._tau_ext = np.zeros(6)    # (6,) external torques per joint
+        self._wrench = np.zeros(6)     # (6,) EE wrench [fx, fy, fz, tx, ty, tz]
 
         # Safety counters
         self._overcurrent_count: int = 0
@@ -165,6 +180,26 @@ class DK1Robot:
         )
         return {"pos": float(np.clip(normalized, 0.0, 1.0)), "torque": float(torque[6])}
 
+    def get_wrench_state(self) -> dict[str, np.ndarray]:
+        """
+        Return estimated external wrench and per-joint external torques.
+
+        Returns:
+            dict with keys:
+                'wrench': 6D EE wrench [fx, fy, fz, tx, ty, tz], shape (6,)
+                'tau_ext': per-joint external torques, shape (6,)
+        """
+        with self._state_lock:
+            return {
+                "wrench": self._wrench.copy(),
+                "tau_ext": self._tau_ext.copy(),
+            }
+
+    def get_tau_ext(self) -> np.ndarray:
+        """Return per-joint external torques, shape (6,)."""
+        with self._state_lock:
+            return self._tau_ext.copy()
+
     # -------------------------------------------------------------------------
     # Server loop (~300 Hz)
     # -------------------------------------------------------------------------
@@ -199,6 +234,15 @@ class DK1Robot:
             # Gravity compensation
             # ------------------------------------------------------------------
             tau_ff = self._grav_comp.compute(pos[:6]) * cfg.gravity_comp_scale
+
+            # ------------------------------------------------------------------
+            # External wrench estimation
+            # ------------------------------------------------------------------
+            tau_ext = torque[:6] - tau_ff
+            wrench = self._wrench_estimator.compute(pos[:6], tau_ext)
+            with self._state_lock:
+                self._tau_ext = tau_ext
+                self._wrench = wrench
 
             # ------------------------------------------------------------------
             # Safety: joint position clamping (with buffer)
