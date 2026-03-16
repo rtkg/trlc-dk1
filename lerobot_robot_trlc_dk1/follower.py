@@ -56,6 +56,9 @@ class DK1FollowerConfig(RobotConfig):
     max_gripper_torque: float = 1.0         # Nm
     disable_torque_on_disconnect: bool = False
     cameras: dict[str, CameraConfig] = field(default_factory=dict)
+    # Impedance mode gains (None = use defaults from trlc_dk1_control)
+    arm_kp: list[float] | None = None   # MIT Kp per joint [j1..j6]
+    arm_kd: list[float] | None = None   # MIT Kd per joint [j1..j6]
     # POS_VEL mode only
     joint_velocity_scaling: float = 0.2
 
@@ -139,6 +142,10 @@ class DK1Follower(Robot):
             from trlc_dk1_control import DK1Robot, DK1_DEFAULT_CONFIG
             cfg = DK1_DEFAULT_CONFIG(self.config.port)
             cfg.max_gripper_torque_nm = self.config.max_gripper_torque
+            if self.config.arm_kp is not None:
+                cfg.arm_kp = np.array(self.config.arm_kp)
+            if self.config.arm_kd is not None:
+                cfg.arm_kd = np.array(self.config.arm_kd)
             self._robot = DK1Robot(cfg)
             self._robot.connect()
         else:
