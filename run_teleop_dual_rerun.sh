@@ -8,6 +8,7 @@
 #   RIGHT_FOLLOWER_PORT = /dev/ttyACM1
 #   LEFT_LEADER_PORT    = /dev/ttyACM2
 #   RIGHT_LEADER_PORT   = /dev/ttyACM3
+#   RERUN_IP            = 10.11.10.36 (laptop IP for rerun viewer)
 
 set -euo pipefail
 
@@ -18,4 +19,5 @@ RERUN_FLUSH_NUM_BYTES=1000 exec taskset -c 8-15 chrt -f 85 uv run python "${SCRI
     --right-follower-port "${RIGHT_FOLLOWER_PORT:-/dev/ttyACM1}" \
     --left-leader-port "${LEFT_LEADER_PORT:-/dev/ttyACM2}" \
     --right-leader-port "${RIGHT_LEADER_PORT:-/dev/ttyACM3}" \
+    --rerun-ip "${RERUN_IP:-10.11.10.36}" \
     "$@"
