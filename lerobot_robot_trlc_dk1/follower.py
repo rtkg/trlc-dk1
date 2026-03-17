@@ -108,6 +108,8 @@ class DK1Follower(Robot):
                 motor_ft[f"{j}.tau_ext"] = float
             for comp in ("fx", "fy", "fz", "tx", "ty", "tz"):
                 motor_ft[f"wrench.{comp}"] = float
+            motor_ft["wrench.force_mag"] = float
+            motor_ft["wrench.torque_mag"] = float
         cam_ft = {
             cam: (self.config.cameras[cam].height, self.config.cameras[cam].width, 3)
             for cam in self.cameras
@@ -254,8 +256,11 @@ class DK1Follower(Robot):
         obs["gripper.pos"] = gripper["pos"]
         for i, j in enumerate(JOINT_NAMES):
             obs[f"{j}.tau_ext"] = float(wrench_state["tau_ext"][i])
+        w = wrench_state["wrench"]
         for k, comp in enumerate(("fx", "fy", "fz", "tx", "ty", "tz")):
-            obs[f"wrench.{comp}"] = float(wrench_state["wrench"][k])
+            obs[f"wrench.{comp}"] = float(w[k])
+        obs["wrench.force_mag"] = float(np.linalg.norm(w[:3]))
+        obs["wrench.torque_mag"] = float(np.linalg.norm(w[3:]))
         return obs
 
     def _get_observation_pos_vel(self) -> dict[str, Any]:
